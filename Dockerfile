@@ -5,7 +5,7 @@ FROM alpine
 # FROM i386/alpine
 
 # https://github.com/gliderlabs/docker-alpine/issues/24
-RUN apk update && apk add alpine-sdk zsh && mkdir -p /ft_nm
+RUN apk update && apk add alpine-sdk zsh && mkdir -p /mframbouandoronda
 
-WORKDIR /ft_nm
+WORKDIR /mframbouandoronda
 CMD ["zsh"]

@@ -1,5 +1,5 @@
 run:
 	@echo building container
-	docker build -t ft_woody ./
+	docker build -t mframbouandoronda ./
 	@echo starting container
-	docker run -v "$(PWD)/srcs":/ft_woody -it ft_woody
+	docker run -v "$(PWD)/srcs":/mframbouandoronda -it mframbouandoronda

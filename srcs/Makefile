@@ -5,7 +5,7 @@ OBJS = $(SRCS:.c=.o)
 LIBFT = ./libft/libft.a
 LIBFT_FOLDER = ./libft
 
-NAME = ft_nm
+NAME = woody_woodpacker
 
 CC = gcc
 
