@@ -2,8 +2,10 @@
 !*.c
 !*.h
 !Makefile
-!srcs
+!srcs/
 !Dockerfile
 !.gitignore
 !libft/
 !resources/
+!sample
+!sample_32bit
