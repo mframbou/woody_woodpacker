@@ -86,57 +86,8 @@ int main(int argc, char **argv)
     }
 
 
-	// printf("Original file:\n");
-	// for (size_t i = 0; i < file_size; i++)
-	// {
-	// 	printf("%02x", ((unsigned char *)file_content)[i]);
-	// 	if (i % 16 == 15)
-	// 		printf("\n");
-	// }
-	// printf("\n");
-
-	// // encrypt the file
-	// unsigned char key = 0x42;
-
-	// for (size_t i = 0; i < file_size; i++)
-	// 	((unsigned char *)file_content)[i] += key;
-
-	// for (size_t i = 0; i < file_size; i++)
-	// 	((unsigned char *)file_content)[i] ^= key;
-
-	// for (size_t i = 0; i < file_size; i++)
-	// 	((unsigned char *)file_content)[i] -= key;
-
-	// // print the file in hex
-	// printf("Encrypted:\n");
-	// for (size_t i = 0; i < file_size; i++)
-	// {
-	// 	printf("%02x", ((unsigned char *)file_content)[i]);
-	// 	if (i % 16 == 15)
-	// 		printf("\n");
-	// }
-	// printf("\n");
-
-	// // decrypt the file
-	// for (size_t i = 0; i < file_size; i++)
-	// 	((unsigned char *)file_content)[i] += key;
-
-	// for (size_t i = 0; i < file_size; i++)
-	// 	((unsigned char *)file_content)[i] ^= key;
-
-	// for (size_t i = 0; i < file_size; i++)
-	// 	((unsigned char *)file_content)[i] -= key;
-
-	// // print the file in hex
-	// printf("Decrypted:\n");
-	// for (size_t i = 0; i < file_size; i++)
-	// {
-	// 	printf("%02x", ((unsigned char *)file_content)[i]);
-	// 	if (i % 16 == 15)
-	// 		printf("\n");
-	// }
-	// printf("\n");
-
+	printf("File size: %zu\n", file_size);
+	
 
 
 	if (munmap(file_content, file_size) == -1)
