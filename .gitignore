@@ -1,0 +1,11 @@
+*
+!*.c
+!*.h
+!Makefile
+!srcs/
+!Dockerfile
+!.gitignore
+!libft/
+!resources/
+!sample
+!sample_32bit
