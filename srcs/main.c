@@ -9,6 +9,10 @@
 
 unsigned int payload_size = 4096;
 
+unsigned int		align(unsigned int value, int base)
+{
+	return (value + (base - 1)) & -base;
+}
 
 void usage()
 {
@@ -18,6 +22,91 @@ void usage()
 void print_error(const char *msg)
 {
     fprintf(stderr, "Error: %s\n", msg);
+}
+
+Elf64_Shdr		*add_new_section_header64(void *map, Elf64_Shdr *shdr, \
+						uint64_t shnum, size_t filesize)
+{
+	unsigned int 	index;
+	int		added;
+	uint64_t	prev_comment_offset;
+	Elf64_Shdr	*prev_shdr;
+	Elf64_Shdr	*new_shdr;
+	uint64_t	data_addr;
+	uint64_t 	data_offset;
+
+	index = 0;
+	added = 0;
+	prev_comment_offset = 0;
+	while (index < shnum + 1)
+	{
+		/* if the section is added then we need to shift the sh_offset of other consecutive section after our section */
+		if (added)
+		{
+	    	if (shdr->sh_type == SHT_NOTE)
+	    	{
+	    	    prev_comment_offset = shdr->sh_offset;
+				shdr->sh_offset = prev_shdr->sh_offset + prev_shdr->sh_size;
+	    	}
+	    	else if (prev_comment_offset != 0 && prev_shdr->sh_type == SHT_NOTE)
+	    	{
+				shdr->sh_offset = prev_shdr->sh_offset + (shdr->sh_offset - prev_comment_offset);
+				prev_comment_offset = 0;
+	    	}
+			/* Handle comment section alignement */
+			else if (shdr->sh_type == SHT_PROGBITS && shdr->sh_flags == SHF_STRINGS + SHF_MERGE)
+			{
+				prev_comment_offset = shdr->sh_offset;
+				shdr->sh_offset = prev_shdr->sh_offset + prev_shdr->sh_size;
+			}
+			//else if (prev_comment_offset != 0 && !(shdr->sh_type == SHT_PROGBITS && shdr->sh_flags == SHF_STRINGS + SHF_MERGE))
+			else if (prev_comment_offset != 0 && prev_shdr->sh_flags == SHF_STRINGS + SHF_MERGE)
+			{
+				shdr->sh_offset = prev_shdr->sh_offset + (shdr->sh_offset - prev_comment_offset);
+				prev_comment_offset = 0;
+			}
+			else if (shdr->sh_type == SHT_PROGBITS && prev_shdr->sh_addralign != 1)
+				shdr->sh_offset = prev_shdr->sh_offset + align(prev_shdr->sh_size, shdr->sh_addralign);
+			else
+				shdr->sh_offset = prev_shdr->sh_offset + prev_shdr->sh_size;
+		}
+
+		if (index != 0 && shdr->sh_addr == 0 && added == 0 && shdr->sh_name != 0)
+		{
+			/* shift the memory to create a new space for our section hedaer */
+			memmove((void *)shdr + sizeof(Elf64_Shdr), (void *)shdr, filesize - ((size_t)shdr - (size_t)map));
+			/* Initialize our section header */
+			shdr->sh_name = 0x0;
+			shdr->sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+			if (prev_shdr->sh_type == SHT_NOBITS)
+			{
+				prev_shdr--;
+				data_addr = prev_shdr->sh_addr;
+				data_offset = prev_shdr->sh_offset;
+				prev_shdr++;
+				// bss offset = data offset + (bss_addr - data_addr)
+				prev_shdr->sh_offset = data_offset + (prev_shdr->sh_addr - data_addr);
+				shdr->sh_offset = prev_shdr->sh_offset + prev_shdr->sh_size;
+				shdr->sh_addr = prev_shdr->sh_addr + prev_shdr->sh_size;
+			}
+			else
+			{
+				shdr->sh_offset = prev_shdr->sh_offset + align(prev_shdr->sh_size, prev_shdr->sh_addralign);
+				shdr->sh_addr = prev_shdr->sh_addr + align(prev_shdr->sh_size, prev_shdr->sh_addralign);
+			}
+			shdr->sh_type = SHT_PROGBITS;
+			shdr->sh_size = payload_size;
+			shdr->sh_link = 0x0;
+			shdr->sh_addralign = 0x1;
+			shdr->sh_entsize = 0x0;
+			added = 1;
+			new_shdr = shdr;
+		}
+		prev_shdr = shdr;
+		index++;
+		shdr++;
+	}
+	return (new_shdr);
 }
 
 int is_elf_file(unsigned char *file_content, size_t file_size)
@@ -140,55 +229,25 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	Elf64_Phdr *program_header_table = (Elf64_Phdr *)(file_content + header.e_phoff);
-	size_t program_header_entries_count = header.e_phnum;
-	Elf64_Phdr *last_loaded_segment = NULL; // we need to find the last loaded segment and expand it
-	// we cannot simply add another program header, since it will move all offsets in the file breaking everything.
-	unsigned int highest_address = 0;
+	Elf64_Shdr *new_shdr = add_new_section_header64(file_content, (Elf64_Shdr *)header_section_start, header.e_shnum, file_size);
+	unsigned int new_file_size = file_size + payload_size + sizeof(Elf64_Shdr);
 
-	if ((unsigned char *)program_header_table + sizeof(Elf64_Phdr) * program_header_entries_count > file_content + file_size)
-	{
-		fprintf(stderr, "Invalid program header table\n");
-		munmap(file_content, file_size);
-		return EXIT_FAILURE;
-	}
+	// write the new file
+	// FILE *new_file = fopen("woody", "w");
+	// if (new_file == NULL)
+	// {
+	// 	perror("fopen");
+	// 	return EXIT_FAILURE;
+	// }
 
+	// if (fwrite(file_content, 1, new_shdr->sh_offset, new_file) != new_shdr->sh_offset)
+	// {
+	// 	perror("fwrite");
+	// 	return EXIT_FAILURE;
+	// }
 
-	for (size_t i = 0; i < program_header_entries_count; i++)
-	{
-		if (program_header_table[i].p_type == PT_LOAD)
-		{
-			if (last_loaded_segment == NULL || program_header_table[i].p_vaddr > highest_address)
-			{
-				last_loaded_segment = program_header_table + i;
-				highest_address = program_header_table[i].p_vaddr;
-			}
-		}
-	}
-
-	if (last_loaded_segment == NULL)
-	{
-		fprintf(stderr, "No loadable segment found\n");
-		munmap(file_content, file_size);
-		return EXIT_FAILURE;
-	}
-
-	printf("Last loaded segment: \n");
-	printf("p_type: %d\n", last_loaded_segment->p_type);
-	printf("p_flags: %d\n", last_loaded_segment->p_flags);
-	printf("p_offset: %lu\n", last_loaded_segment->p_offset);
-	printf("p_vaddr: %lu\n", last_loaded_segment->p_vaddr);
-	printf("p_paddr: %lu\n", last_loaded_segment->p_paddr);
-	printf("p_filesz: %lu\n", last_loaded_segment->p_filesz);
-	printf("p_memsz: %lu\n", last_loaded_segment->p_memsz);
-	printf("p_align: %lu\n", last_loaded_segment->p_align);
-
-	// now we expand the last segment
 	
-
-
-	// printf("File size: %zu\n", file_size);
-
+	
 
 	if (munmap(file_content, file_size) == -1)
 	{
