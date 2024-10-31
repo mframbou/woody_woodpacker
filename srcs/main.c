@@ -7,12 +7,12 @@
 #include <elf.h>
 #include <sys/stat.h>
 
-unsigned int payload_size = 200;
+uint64_t payload_size = 200;
 
 
 void usage()
 {
-	fprintf(stderr, "Usage: woody_woodpacker [options]\n");
+	fprintf(stderr, "Usage: woody_woodpacker [source] [payload]\n");
 }
 
 void print_error(const char *msg)
@@ -33,7 +33,7 @@ int is_elf_file(unsigned char *file_content, size_t file_size)
 
 int main(int argc, char **argv)
 {
-	if (argc != 2)
+	if (argc != 3)
 	{
 		usage();
 		return EXIT_FAILURE;
@@ -102,11 +102,11 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	Elf64_Ehdr header = *(Elf64_Ehdr *)file_content;
-	void *header_section_start = file_content + header.e_shoff;
-	size_t header_section_size = header.e_shentsize;
-	size_t header_section_entries_count = header.e_shnum;
-	size_t shstrtab_section_index = header.e_shstrndx;
+	Elf64_Ehdr *header = (Elf64_Ehdr *)file_content;
+	void *header_section_start = file_content + header->e_shoff;
+	size_t header_section_size = header->e_shentsize;
+	size_t header_section_entries_count = header->e_shnum;
+	size_t shstrtab_section_index = header->e_shstrndx;
 
 
 	if ((unsigned char *)header_section_start + header_section_size * header_section_entries_count > file_content + file_size)
@@ -140,11 +140,25 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
+	FILE *binary_file = fopen(argv[2], "r");
+	if (binary_file == NULL)
+	{
+		perror("fopen");
+		munmap(file_content, file_size);
+		return EXIT_FAILURE;
+	}
+
+	fseek(binary_file, 0, SEEK_END);
+	payload_size = ftell(binary_file) + 10; // enough to jump to original entry point
+	void *payload_content = malloc(payload_size);
+	fseek(binary_file, 0, SEEK_SET);
+	fread(payload_content, 1, payload_size, binary_file);
+	fclose(binary_file);
 	
-	Elf64_Phdr *program_header_table = (Elf64_Phdr *)(file_content + header.e_phoff);
-	// Elf64_Shdr *section_header_table = (Elf64_Shdr *)(file_content + header.e_shoff);
+	Elf64_Phdr *program_header_table = (Elf64_Phdr *)(file_content + header->e_phoff);
+	// Elf64_Shdr *section_header_table = (Elf64_Shdr *)(file_content + header->e_shoff);
 	// We find an executable segment, find the last section in this segment, then try to expand it using the free padding space, try this for every executable segment
-	for (unsigned int i = 0; i < header.e_phnum; i++)
+	for (unsigned int i = 0; i < header->e_phnum; i++)
 	{
 		if (program_header_table[i].p_type == PT_LOAD && program_header_table[i].p_flags & PF_X)
 		{
@@ -154,7 +168,7 @@ int main(int argc, char **argv)
 			uint64_t segment_start = program_header_table[i].p_offset;
 			uint64_t segment_end = program_header_table[i].p_offset + program_header_table[i].p_memsz;
 
-			for (unsigned int j = 0; j < header.e_shnum; j++)
+			for (unsigned int j = 0; j < header->e_shnum; j++)
 			{
 				uint64_t section_start = section_header_table[j].sh_offset;
 				uint64_t section_end = section_header_table[j].sh_offset + section_header_table[j].sh_size;
@@ -172,7 +186,15 @@ int main(int argc, char **argv)
 						continue;
 					}
 
-					printf("Found %ld bytes of free space in the segment\n", available_space);
+					printf("Found %ld bytes of free space in the segment (payload size: %ld)\n", available_space, payload_size);
+					if (payload_size > available_space)
+					{
+						printf("Payload is too big\n");
+						continue;
+					}
+
+					void *payload_start = file_content + section_start + section_header_table[j].sh_size;
+					uint64_t new_entry_point = section_start + section_header_table[j].sh_size;
 
 					// now we expand the section and segment to fit the payload
 					Elf64_Phdr *segment = &(program_header_table[i]);
@@ -181,11 +203,28 @@ int main(int argc, char **argv)
 
 					Elf64_Shdr *section = &(section_header_table[j]);
 					section->sh_size += payload_size;
+
+					// now modify entry point to point to the payload
+					printf("Current entry point: 0x%08lx\n", header->e_entry);
+					uint64_t old_entry_point = header->e_entry;
+					header->e_entry = new_entry_point;
+					printf("New entry point: 0x%08lx\n", new_entry_point);
+
+					// add a jump to the original entry point
+					// E9 xx xx xx xx
+					// *(uint8_t *)(payload_content + payload_size - 9) = 0xE9;
+					// *(uint64_t *)(payload_content + payload_size - 8) = new_entry_point;
+					
+					// now insert the payload
+					memcpy(payload_start, payload_content, payload_size);
+
+					goto ggez;
 				}
 
 			}
 		}
 	}
+	ggez:
 
 	// write the result to a new file
 	FILE *new_file = fopen("woody", "w");
