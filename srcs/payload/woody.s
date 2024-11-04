@@ -1,7 +1,7 @@
 .intel_syntax noprefix # use intel syntax (dest, src) and no prefix (%rax -> rax)
 
 base:
-    jmp past                     # 2 bytes: ab 16
+    jmp payload                   # 2 bytes: ab 16
 
 
 entry_delta:                     # next 8 bytes hold this variable 
@@ -10,7 +10,7 @@ entry_delta:                     # next 8 bytes hold this variable
 message:
     .ascii "....WOODY....\n"
 
-past:
+payload:
                                  # save registers
     push rdi                     # argc
     push rsi                     # argv

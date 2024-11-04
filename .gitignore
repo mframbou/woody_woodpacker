@@ -10,5 +10,6 @@
 !sample
 !sample_32bit
 !ressources.txt
-!inject_asm/
-!hello_world*
+!payload/
+!woody.bin
+!woody.s

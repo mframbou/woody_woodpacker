@@ -7,17 +7,20 @@
 #include <elf.h>
 #include <sys/stat.h>
 
-uint64_t payload_size = 200;
-
+unsigned char payload_bin[] = {
+  0xeb, 0x16, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2e, 0x2e,
+  0x2e, 0x2e, 0x57, 0x4f, 0x4f, 0x44, 0x59, 0x2e, 0x2e, 0x2e, 0x2e, 0x0a,
+  0x57, 0x56, 0x52, 0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d,
+  0x35, 0xe1, 0xff, 0xff, 0xff, 0x48, 0xc7, 0xc2, 0x0e, 0x00, 0x00, 0x00,
+  0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0x8b, 0x05,
+  0xc2, 0xff, 0xff, 0xff, 0x4c, 0x8d, 0x15, 0xb9, 0xff, 0xff, 0xff, 0x49,
+  0x29, 0xc2, 0x5a, 0x5e, 0x5f, 0x41, 0xff, 0xe2
+};
+uint64_t payload_size = 80;
 
 void usage()
 {
-	fprintf(stderr, "Usage: woody_woodpacker [source] [payload]\n");
-}
-
-void print_error(const char *msg)
-{
-    fprintf(stderr, "Error: %s\n", msg);
+	fprintf(stderr, "Usage: woody_woodpacker [source_exec]\n");
 }
 
 int is_elf_file(unsigned char *file_content, size_t file_size)
@@ -33,7 +36,7 @@ int is_elf_file(unsigned char *file_content, size_t file_size)
 
 int main(int argc, char **argv)
 {
-	if (argc != 3)
+	if (argc != 2)
 	{
 		usage();
 		return EXIT_FAILURE;
@@ -61,10 +64,22 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	unsigned char *file_content = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-	if (file_content == MAP_FAILED)
+	unsigned char *file_content = malloc(file_size);
+	if (file_content == NULL)
 	{
-		perror("mmap");
+		perror("malloc");
+		return EXIT_FAILURE;
+	}
+
+	if (lseek(fd, 0, SEEK_SET) == -1)
+	{
+		perror("lseek");
+		return EXIT_FAILURE;
+	}
+
+	if (read(fd, file_content, file_size) == -1)
+	{
+		perror("read");
 		return EXIT_FAILURE;
 	}
 
@@ -77,28 +92,28 @@ int main(int argc, char **argv)
 
     if (!is_elf_file(file_content, file_size))
     {
-        print_error("Not an ELF file");
+		fprintf(stderr, "Not an ELF file\n");
         return EXIT_FAILURE;
     }
 
 	if (file_content[EI_VERSION] != EV_CURRENT)
 	{
 		fprintf(stderr, "Invalid ELF version\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
 	if (file_content[EI_CLASS] != ELFCLASS64)
 	{
 		fprintf(stderr, "Only 64-bit ELF files are supported\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
 	if (file_size < sizeof(Elf64_Ehdr))
 	{
 		fprintf(stderr, "File is too small to contain an ELF header\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
@@ -112,14 +127,14 @@ int main(int argc, char **argv)
 	if ((unsigned char *)header_section_start + header_section_size * header_section_entries_count > file_content + file_size)
 	{
 		fprintf(stderr, "Invalid section header table\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
 	if (shstrtab_section_index >= header_section_entries_count)
 	{
 		fprintf(stderr, "Invalid shstrtab section index\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
@@ -129,31 +144,27 @@ int main(int argc, char **argv)
 	if (shstrtab_section_header->sh_type != SHT_STRTAB)
 	{
 		fprintf(stderr, "Invalid shstrtab section type\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
 	if (shstrtab_section_header->sh_offset + shstrtab_section_header->sh_size > file_size)
 	{
 		fprintf(stderr, "Invalid shstrtab section size\n");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
-	FILE *binary_file = fopen(argv[2], "r");
-	if (binary_file == NULL)
-	{
-		perror("fopen");
-		munmap(file_content, file_size);
-		return EXIT_FAILURE;
-	}
 
-	fseek(binary_file, 0, SEEK_END);
-	payload_size = ftell(binary_file) + 10; // enough to jump to original entry point
 	void *payload_content = malloc(payload_size);
-	fseek(binary_file, 0, SEEK_SET);
-	fread(payload_content, 1, payload_size, binary_file);
-	fclose(binary_file);
+	if (payload_content == NULL)
+	{
+		perror("malloc");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	memcpy(payload_content, payload_bin, payload_size);
 	
 	Elf64_Phdr *program_header_table = (Elf64_Phdr *)(file_content + header->e_phoff);
 	// Elf64_Shdr *section_header_table = (Elf64_Shdr *)(file_content + header->e_shoff);
@@ -237,7 +248,7 @@ int main(int argc, char **argv)
 	if (new_file == NULL)
 	{
 		perror("fopen");
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
@@ -247,7 +258,7 @@ int main(int argc, char **argv)
 	{
 		perror("fwrite");
 		fclose(new_file);
-		munmap(file_content, file_size);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
@@ -255,9 +266,5 @@ int main(int argc, char **argv)
 	
 	
 
-	if (munmap(file_content, file_size) == -1)
-	{
-		perror("munmap");
-		return EXIT_FAILURE;
-	}
+	free(file_content);
 }
