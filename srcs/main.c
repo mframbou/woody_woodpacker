@@ -18,6 +18,11 @@ unsigned char payload_bin[] = {
 };
 uint64_t payload_size = 80;
 
+
+// https://tmpout.sh/1/2.html
+// https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+// https://github.com/zznop/drow
+
 void usage()
 {
 	fprintf(stderr, "Usage: woody_woodpacker [source_exec]\n");
@@ -42,7 +47,7 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	// open the file
+	// open the target ELF file
 	int fd = open(argv[1], O_RDONLY);
 	if (fd == -1)
 	{
@@ -57,12 +62,6 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	if (file_size < EI_NIDENT) // If we cannot get identification infos (magic number, architecture etc.)
-	{
-		fprintf(stderr, "File is too small to be an ELF file\n");
-		close(fd);
-		return 1;
-	}
 
 	unsigned char *file_content = malloc(file_size);
 	if (file_content == NULL)
@@ -83,16 +82,23 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	// from the man, we can close the fd without invalidating the mapping, so close is as soon as possible
 	if (close(fd) == -1)
 	{
 		perror("close");
 		return EXIT_FAILURE;
 	}
 
+	if (file_size < EI_NIDENT) // If we cannot get identification infos (magic number, architecture etc.)
+	{
+		fprintf(stderr, "File is too small to be an ELF file\n");
+		free(file_content);
+		return 1;
+	}
+
     if (!is_elf_file(file_content, file_size))
     {
 		fprintf(stderr, "Not an ELF file\n");
+		free(file_content);
         return EXIT_FAILURE;
     }
 
@@ -167,10 +173,14 @@ int main(int argc, char **argv)
 	memcpy(payload_content, payload_bin, payload_size);
 	
 	Elf64_Phdr *program_header_table = (Elf64_Phdr *)(file_content + header->e_phoff);
+	int found_cave = 0;
 	// Elf64_Shdr *section_header_table = (Elf64_Shdr *)(file_content + header->e_shoff);
 	// We find an executable segment, find the last section in this segment, then try to expand it using the free padding space, try this for every executable segment
 	for (unsigned int i = 0; i < header->e_phnum; i++)
 	{
+		if (found_cave)
+			break;
+
 		if (program_header_table[i].p_type == PT_LOAD && program_header_table[i].p_flags & PF_X)
 		{
 			printf("Exec segment from 0x%08lx to 0x%08lx (size: %ld bytes)\n", program_header_table[i].p_offset, program_header_table[i].p_offset + program_header_table[i].p_memsz, program_header_table[i].p_memsz);
@@ -179,10 +189,12 @@ int main(int argc, char **argv)
 			uint64_t segment_start = program_header_table[i].p_offset;
 			uint64_t segment_end = program_header_table[i].p_offset + program_header_table[i].p_memsz;
 
+
 			for (unsigned int j = 0; j < header->e_shnum; j++)
 			{
 				uint64_t section_start = section_header_table[j].sh_offset;
 				uint64_t section_end = section_header_table[j].sh_offset + section_header_table[j].sh_size;
+
 				if (section_end == segment_end) {
 					printf("Section %s at 0x%08lx (size: %ld bytes)\n", (char *)(file_content + shstrtab_section_header->sh_offset + section_header_table[j].sh_name), section_start, section_header_table[j].sh_size);
 					
@@ -235,13 +247,121 @@ int main(int argc, char **argv)
 					// now insert the payload
 					memcpy(payload_start, payload_content, payload_size);
 
-					goto ggez;
+					// TODO try to find a way to create codecave if there is no free space in the segment
+					found_cave = 1;
 				}
+			}
+			if (!found_cave)
+			{
+				printf("Segment did not fit in section or whatever\n");
+				// possible due to PT_NOTE injection for instance, so now check if we can just expand the segment without expanding the section (eg if code is injected at the end of the file we should be able to expand the segment without expanding the section)
 
+				// first check if its the highest virtual address PT_LOAD segment
+				Elf64_Phdr *highest_vaddr_segment = NULL;
+				for (unsigned int i = 0; i < header->e_phnum; i++)
+				{
+					if (program_header_table[i].p_type == PT_LOAD)
+					{
+						if (highest_vaddr_segment == NULL || program_header_table[i].p_vaddr > highest_vaddr_segment->p_vaddr)
+							highest_vaddr_segment = &(program_header_table[i]);
+					}
+				}
+				
+				Elf64_Phdr *segment = &(program_header_table[i]);
+				if (segment == highest_vaddr_segment)
+				{
+					printf("Segment is the highest virtual address PT_LOAD segment\n");
+					
+					// simply expand the segment
+					uint64_t old_entry_point = header->e_entry;
+					uint64_t new_entry_point = segment->p_vaddr + segment->p_memsz;
+					header->e_entry = new_entry_point;
+
+					printf("Test: %08lx %08lx %08ld\n", old_entry_point, segment->p_vaddr, segment->p_memsz);
+
+					uint64_t entry_delta = new_entry_point - old_entry_point;
+					printf("NEW Entry point delta: 0x%lx\n", entry_delta);
+
+					segment->p_memsz += payload_size;
+					segment->p_filesz += payload_size;
+
+					// inject the delta into the payload starting at the 3rd byte
+					*(uint64_t *)(payload_content + 2) = entry_delta;
+
+					file_content = realloc(file_content, file_size + payload_size); // expand the file to fit the payload
+					memcpy(file_content + file_size, payload_content, payload_size);
+
+					file_size += payload_size;
+					printf("Successfully injected payload\n");
+					printf("NEW New entry point: 0x%08lx\n", new_entry_point);
+					found_cave = 1;
+					break; // break cause header pointer is now invalid
+				}
 			}
 		}
 	}
-	ggez:
+
+	if (!found_cave)
+	{
+		// couldnt find already existing cave, so create one using PT_NOTE segment
+
+		printf("didnt find a cave, try PT_NOTE inject\n");
+
+		// find the highest virtual address in use
+		uint64_t highest_vaddr = 0;
+		for (unsigned int i = 0; i < header->e_phnum; i++)
+		{
+			if (program_header_table[i].p_vaddr + program_header_table[i].p_memsz > highest_vaddr)
+			{
+				highest_vaddr = program_header_table[i].p_vaddr + program_header_table[i].p_memsz;
+			}
+		}
+
+		// now align it to page size
+		uint64_t highest_vaddr_aligned = (highest_vaddr + 0xfff) & ~0xfff;
+		printf("Highest virtual address: 0x%08lx\n", highest_vaddr_aligned);
+	
+		// find the PT_NOTE segment
+		for (unsigned int i = 0; i < header->e_phnum; i++)
+		{
+			if (program_header_table[i].p_type == PT_NOTE)
+			{
+				printf("Found PT_NOTE segment\n");
+				
+				Elf64_Phdr *segment = &(program_header_table[i]);
+				segment->p_type = PT_LOAD;
+				segment->p_flags = PF_R | PF_X;
+				// set high address to avoid collision
+				segment->p_vaddr = highest_vaddr_aligned + file_size; // why is this + file_size mandatory ?? prob for alignment but why ?? (otherwise segfault)
+				
+				// remove all previous content (don't do += payload_size) otherwise if we later try to expand this segment it will segfault (why tho ?)
+				segment->p_filesz = payload_size;
+				segment->p_memsz = payload_size;
+
+				segment->p_offset = file_size; // append the payload to the end of the file
+
+				uint64_t old_entry_point = header->e_entry;
+				uint64_t new_entry_point = segment->p_vaddr;
+				header->e_entry = new_entry_point;
+
+				uint64_t entry_delta = new_entry_point - old_entry_point;
+				printf("Entry point delta: 0x%lx\n", entry_delta);
+
+				// inject the delta into the payload starting at the 3rd byte
+				*(uint64_t *)(payload_content + 2) = entry_delta;
+
+
+				file_content = realloc(file_content, file_size + payload_size); // expand the file to fit the payload
+				memcpy(file_content + file_size, payload_content, payload_size);
+
+				file_size += payload_size;
+				printf("Successfully injected payload\n");
+				printf("New entry point: 0x%08lx\n", new_entry_point);
+
+				break;
+			}
+		}
+	}
 
 	// write the result to a new file
 	FILE *new_file = fopen("woody", "w");
@@ -252,6 +372,8 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
+
+
 	chmod("woody", 0777);
 
 	if (fwrite(file_content, 1, file_size, new_file) != file_size)
@@ -261,9 +383,6 @@ int main(int argc, char **argv)
 		free(file_content);
 		return EXIT_FAILURE;
 	}
-
-
-	
 	
 
 	free(file_content);
