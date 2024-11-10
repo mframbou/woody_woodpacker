@@ -1,7 +1,7 @@
 .intel_syntax noprefix # use intel syntax (dest, src) and no prefix (%rax -> rax)
 
 base:
-    jmp payload                   # 2 bytes: ab 16
+    jmp payload                  # 2 bytes: ab 16
 
 
 entry_delta:                     # next 8 bytes hold this variable 

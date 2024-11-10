@@ -51,14 +51,14 @@ int main(int argc, char **argv)
 	int fd = open(argv[1], O_RDONLY);
 	if (fd == -1)
 	{
-		perror("open");
+		perror("Cannot open file");
 		return EXIT_FAILURE;
 	}
 
 	size_t file_size = lseek(fd, 0, SEEK_END);
 	if (file_size == -1)
 	{
-		perror("lseek");
+		perror("Cannot lseek file");
 		return EXIT_FAILURE;
 	}
 
@@ -66,25 +66,25 @@ int main(int argc, char **argv)
 	unsigned char *file_content = malloc(file_size);
 	if (file_content == NULL)
 	{
-		perror("malloc");
+		perror("Malloc failed");
 		return EXIT_FAILURE;
 	}
 
 	if (lseek(fd, 0, SEEK_SET) == -1)
 	{
-		perror("lseek");
+		perror("Cannot lseek file");
 		return EXIT_FAILURE;
 	}
 
 	if (read(fd, file_content, file_size) == -1)
 	{
-		perror("read");
+		perror("Cannot read file");
 		return EXIT_FAILURE;
 	}
 
 	if (close(fd) == -1)
 	{
-		perror("close");
+		perror("Cannot close file");
 		return EXIT_FAILURE;
 	}
 
@@ -97,14 +97,14 @@ int main(int argc, char **argv)
 
     if (!is_elf_file(file_content, file_size))
     {
-		fprintf(stderr, "Not an ELF file\n");
+		fprintf(stderr, "File is not an ELF file\n");
 		free(file_content);
         return EXIT_FAILURE;
     }
 
 	if (file_content[EI_VERSION] != EV_CURRENT)
 	{
-		fprintf(stderr, "Invalid ELF version\n");
+		fprintf(stderr, "File has invalid ELF version\n");
 		free(file_content);
 		return EXIT_FAILURE;
 	}
@@ -124,11 +124,11 @@ int main(int argc, char **argv)
 	}
 
 	Elf64_Ehdr *header = (Elf64_Ehdr *)file_content;
+
 	void *header_section_start = file_content + header->e_shoff;
 	size_t header_section_size = header->e_shentsize;
 	size_t header_section_entries_count = header->e_shnum;
 	size_t shstrtab_section_index = header->e_shstrndx;
-
 
 	if ((unsigned char *)header_section_start + header_section_size * header_section_entries_count > file_content + file_size)
 	{
