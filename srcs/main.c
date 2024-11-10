@@ -271,6 +271,31 @@ int main(int argc, char **argv)
 				if (segment == highest_vaddr_segment)
 				{
 					printf("Segment is the highest virtual address PT_LOAD segment\n");
+					// check if end of segment + payload_size overlaps other segment/section, if not we can expand
+
+					uint64_t segment_end_offset = segment->p_offset + segment->p_memsz;
+					uint64_t new_segment_end_offset = segment_end + payload_size;
+
+					int overlaps = 0;
+					// we use filesz and not memsz because we just want to see if we can expand in file. There might be overlap when loaded in memory but we don't care (since our code is executed first)
+					// for instance with .bss section, which is probably loaded in same memory space as the segment but we don't care
+					for (unsigned int j = 0; j < header->e_phnum; j++)
+					{
+						if (program_header_table[j].p_offset < new_segment_end_offset && program_header_table[j].p_offset + program_header_table[j].p_filesz > segment_end_offset)
+						{
+							Elf64_Phdr *overlapping_segment = &(program_header_table[j]);
+							overlaps = 1;
+							break;
+						}
+					}
+
+					if (overlaps)
+					{
+						printf("Segment overlaps other segment, cannot expand\n");
+						continue;
+					}
+
+					
 					
 					// simply expand the segment
 					uint64_t old_entry_point = header->e_entry;
