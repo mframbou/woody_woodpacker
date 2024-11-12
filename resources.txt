@@ -1,0 +1,35 @@
+https://github.com/zznop/drow => not working when testing locally (segfault)
+=>
+    Map in the umodified target ELF executable and the user-supplied payload, a position-independent blob
+    Locate the first executable segment by parsing program headers
+    Locate the last section in the executable segment by parsing section headers
+    Expand the last section (in the segment) section header's sh_size and program header's p_memsz/p_filesz by the size of the user-supplied payload
+    Fixup section headers' sh_offset's and program headers' p_offset's (move down sections and segments to make room for the payload and a small "stager stub")
+    Fix offsets in the ELF header (e_shoff, e_phoff, etc..)
+    Modify the ELF header e_entry (ELF entrypoint offset) to point to the injected code
+    Create a new ELF containing the injected code and modified ELF headers
+
+https://stackoverflow.com/questions/14361248/whats-the-difference-of-section-and-segment-in-elf-file-format
+
+Program header table: contains a list of SEGMENTS, each describing a part of the file to be loaded in memory (mostly useful for execution)
+Section header table: contains a list of SECTIONS, each describing a logical part of the file (mostly useful for linking and debugging)
+
+https://github.com/fimad/Keebler
+
+https://www.youtube.com/watch?v=bdNCcYddYEU
+
+https://www.youtube.com/watch?v=18DKETYfvjg
+
+https://github.com/SilentVoid13/Silent_Packer/blob/master/METHODS.md
+
+https://github.com/0x050f/woody-woodpacker
+
+https://gist.github.com/x0nu11byt3/bcb35c3de461e5fb66173071a2379779
+
+https://github.com/d-r-e/woody_woodpacker
+
+https://github.com/sebastiencs/Packer_ELF
+
+https://tmpout.sh/1/2.html
+https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+https://github.com/zznop/drow
