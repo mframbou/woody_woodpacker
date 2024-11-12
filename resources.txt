@@ -33,3 +33,6 @@ https://github.com/sebastiencs/Packer_ELF
 https://tmpout.sh/1/2.html
 https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
 https://github.com/zznop/drow
+
+https://en.wikipedia.org/wiki/Tiny_Encryption_Algorithm
+https://www.nayuki.io/page/tiny-encryption-algorithm-in-x86-assembly
