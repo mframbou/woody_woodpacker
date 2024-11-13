@@ -1,32 +1,41 @@
 .intel_syntax noprefix # use intel syntax (dest, src) and no prefix (%rax -> rax)
 
 base:
-    jmp decrypt_data             # 2 bytes: eb 16
+    jmp payload             # 2 bytes: eb 16
 
 # VARIABLES
 entry_delta:                     # next 8 bytes hold this variable 
     .8byte 0                     # This value will be patched by the injector (new_entry - original_entry)
 
 decryption_key:                  # 8 bit key
-    .8byte 0                      # This value will be patched by the injector
+    .8byte 0                     # This value will be patched by the injector
 
 decrypt_size:                    # length of section to decrypt
     .8byte 0                     # This value will be patched by the injector
 
 decrypt_offset:                  # offset of section to decrypt
     .8byte 0                     # This value will be patched by the injector
-    
+
 
 # DECRYPTION
-decrypt_data:                    # Decrypt data at decrypt_offset of size decrypt_size with decryption_key TEA algorithm
-                                 # simple XOR decryption
+decrypt_data:                       
+                                    # Decrypt data at decrypt_offset of size decrypt_size with decryption_key TEA algorithm
+                                    # simple XOR decryption
     mov rax, [rip + decrypt_size]
     mov r8, [rip + decrypt_offset]
-    lea r9, [rip + base]           # address of the base of the code (find payload REAL base address)
-    add r8, r9                     # real address of .text section (payload REAL base address + decrypt_offset)
-    mov rbx, r8                    # real address of the data to decrypt (.text section address)
+    lea r9, [rip + base]            # address of the base of the code (find payload REAL base address)
+    add r8, r9                      # real address of .text section (payload REAL base address + decrypt_offset)
+    mov rbx, r8                     # real address of the data to decrypt (.text section address)
     mov rcx, [rip + decryption_key]
-    mov rdx, 0                   # counter (i)
+    mov rdx, 0                      # counter (i)
+
+    mov r10, rax                    # copy of size of the section to decrypt (since we need to use rax for syscall)
+    mov rax, 10                     # call mprotect (syscall 10) to make the section Read-Write-Execute, after decryption reset it back to Read-Execute
+    mov rdi, rbx                    # address of the section to decrypt
+    mov rsi, r10                    # size of the section to decrypt
+    mov rdx, 7                      # RWX
+    syscall 
+
 
 decrypt_loop:
     cmp rdx, rax
@@ -45,6 +54,12 @@ decrypt_loop:
 
 
 decrypt_end:
+    mov rax, 10                 # call mprotect (syscall 10) to make the section Read-Execute
+    mov rdi, rbx                # address of the section to decrypt
+    mov rsi, r10                # size of the section to decrypt
+    mov rdx, 5                  # RX
+    syscall
+    
     jmp payload                  # jump to the payload
 
 
