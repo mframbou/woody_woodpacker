@@ -20,6 +20,12 @@ decrypt_offset:                  # offset of section to decrypt
 # DECRYPTION
 decrypt_data:                    # Decrypt data at decrypt_offset of size decrypt_size with decryption_key TEA algorithm
                                  # simple XOR decryption
+    mov rax, [rip + entry_delta]
+    mov rax, [rip + entry_delta]
+    mov rax, [rip + entry_delta]
+    mov rax, [rip + entry_delta]
+    mov rax, [rip + entry_delta]
+    mov rax, [rip + entry_delta]
     mov rax, [rip + decrypt_size]
     mov rbx, [rip + decrypt_offset]
     mov rcx, [rip + decryption_key]
