@@ -36,7 +36,7 @@ decrypt_data:
     lea r9, [rip + base]            # address of the base of the code (find payload REAL base address)
     add r8, r9                      # real address of .text section (payload REAL base address + decrypt_offset)
     mov rbx, r8                     # real address of the data to decrypt (.text section address)
-    mov rcx, 0x42 # [rip + decryption_key] TODO debug why variable isnt working 
+    mov rcx, [rip + decryption_key] # TODO debug why variable isnt working 
     mov rdx, 0                      # counter (i)
 
     push rax                       # save before syscall
