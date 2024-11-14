@@ -29,6 +29,9 @@ decrypt_data:
     push r10
     push rsi
     push rdi
+    push r14
+    push r15
+
                                     # Decrypt data at decrypt_offset of size decrypt_size with decryption_key TEA algorithm
                                     # simple XOR decryption
     mov rax, [rip + decrypt_size]
@@ -36,27 +39,47 @@ decrypt_data:
     lea r9, [rip + base]            # address of the base of the code (find payload REAL base address)
     add r8, r9                      # real address of .text section (payload REAL base address + decrypt_offset)
     mov rbx, r8                     # real address of the data to decrypt (.text section address)
-    mov rcx, [rip + decryption_key] # TODO debug why variable isnt working 
+    mov rcx, [rip + decryption_key] # key
     mov rdx, 0                      # counter (i)
 
-    push rax                       # save before syscall
+    push rax                        # save before syscall
     push rbx
     push rcx
     push rdx
 
+/*
+void * allocate_aligned(size_t size, size_t alignment)
+{
+  const size_t mask = alignment - 1;
+  const uintptr_t mem = (uintptr_t) malloc(size + alignment);
+  return (void *) ((mem + mask) & ~mask);
+}
+*/
 
-    mov r10, rax                    # copy of size of the section to decrypt (since we need to use rax for syscall)
-    mov rax, 10                     # call mprotect (syscall 10) to make the section Read-Write-Execute, after decryption reset it back to Read-Execute
-    mov rdi, rbx                    # address of the section to decrypt
-    mov rsi, r10                    # size of the section to decrypt
-    mov rdx, 7                      # RWX
+
+# https://man7.org/linux/man-pages/man2/mprotect.2.html
+# addr must be aligned to a page boundary.
+    # align address down
+    mov r14, rbx                 # address of the section to decrypt
+    mov r9, 0XFFF                # PAGESIZE - 1
+    not r9                       # ~(PAGESIZE - 1)
+    and r14, r9                  # align address down to PAGESIZE
+
+    # align size up (r14 r15 are callee saved so we dont worry about them)
+    mov r15, rax                 # size of the section to decrypt
+    add r15, 0XFFF               # PAGESIZE - 1
+    and r15, r9                  # align size up to PAGESIZE
+
+    mov rdi, r14                 # ALIGNED address of the section to decrypt
+    mov rsi, r15                 # ALIGNED size of the section to decrypt
+    mov rdx, 7                   # RWX
+    mov rax, 10                  # call mprotect (syscall 10) to make the section Read-Write-Execute, after decryption reset it back to Read-Execute
     syscall
 
-    pop rdx                        # restore after syscall
+    pop rdx                      # restore after syscall
     pop rcx
     pop rbx
     pop rax
-
 
 
 decrypt_loop:
@@ -76,12 +99,14 @@ decrypt_loop:
 
 
 decrypt_end:
-    mov rax, 10                 # call mprotect (syscall 10) to make the section Read-Execute
-    mov rdi, rbx                # address of the section to decrypt
-    mov rsi, r10                # size of the section to decrypt
+    mov rdi, r14                # ALIGNED address of the section to decrypt
+    mov rsi, r15                # ALIGNED size of the section to decrypt
     mov rdx, 5                  # RX
+    mov rax, 10                 # call mprotect (syscall 10) to make the section Read-Execute
     syscall
     
+    pop r15
+    pop r14
     pop rdi
     pop rsi
     pop r10
