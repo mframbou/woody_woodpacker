@@ -36,8 +36,14 @@ decrypt_data:
     lea r9, [rip + base]            # address of the base of the code (find payload REAL base address)
     add r8, r9                      # real address of .text section (payload REAL base address + decrypt_offset)
     mov rbx, r8                     # real address of the data to decrypt (.text section address)
-    mov rcx, [rip + decryption_key]
+    mov rcx, 0x42 # [rip + decryption_key] TODO debug why variable isnt working 
     mov rdx, 0                      # counter (i)
+
+    push rax                       # save before syscall
+    push rbx
+    push rcx
+    push rdx
+
 
     mov r10, rax                    # copy of size of the section to decrypt (since we need to use rax for syscall)
     mov rax, 10                     # call mprotect (syscall 10) to make the section Read-Write-Execute, after decryption reset it back to Read-Execute
@@ -46,12 +52,18 @@ decrypt_data:
     mov rdx, 7                      # RWX
     syscall
 
+    pop rdx                        # restore after syscall
+    pop rcx
+    pop rbx
+    pop rax
+
+
 
 decrypt_loop:
     cmp rdx, rax
     jge decrypt_end             # if i >= size then exit loop
 
-    mov rdi, rbx
+    mov rdi, rbx                # address of the section to decrypt
     add rdi, rdx                # address of the byte to decrypt (decrypt_offset + i)
     movzx rsi, byte ptr [rdi]   # byte to decrypt
     mov r8, rcx                 # key
@@ -94,7 +106,6 @@ payload:
     push rdx                     # envp
 
     push rax
-    push r10
  
     mov rdi, 1                   # stdout
     lea rsi, [rip + message]     # message
@@ -106,7 +117,6 @@ payload:
     lea r10, [rip + base]        # address of the payload (this code)
     sub r10, rax                 # address of the original entry, working with position independent code
 
-    pop r10
     pop rax
 
     pop rdx                      # restore registers
