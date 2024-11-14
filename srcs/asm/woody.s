@@ -1,7 +1,8 @@
 .intel_syntax noprefix # use intel syntax (dest, src) and no prefix (%rax -> rax)
 
 base:
-    jmp payload             # 2 bytes: eb 16
+    jmp decrypt_data             # 2 bytes: eb 16
+# we cannot directly jump to payload since its too bigits not short jmp (EB) but near jmp (E9) which doesnt work since its relative to the next instruction
 
 # VARIABLES
 entry_delta:                     # next 8 bytes hold this variable 
@@ -18,7 +19,16 @@ decrypt_offset:                  # offset of section to decrypt
 
 
 # DECRYPTION
-decrypt_data:                       
+decrypt_data:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push rsi
+    push rdi
                                     # Decrypt data at decrypt_offset of size decrypt_size with decryption_key TEA algorithm
                                     # simple XOR decryption
     mov rax, [rip + decrypt_size]
@@ -34,7 +44,7 @@ decrypt_data:
     mov rdi, rbx                    # address of the section to decrypt
     mov rsi, r10                    # size of the section to decrypt
     mov rdx, 7                      # RWX
-    syscall 
+    syscall
 
 
 decrypt_loop:
@@ -60,6 +70,16 @@ decrypt_end:
     mov rdx, 5                  # RX
     syscall
     
+    pop rdi
+    pop rsi
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+
     jmp payload                  # jump to the payload
 
 
@@ -72,6 +92,9 @@ payload:
     push rdi                     # argc
     push rsi                     # argv
     push rdx                     # envp
+
+    push rax
+    push r10
  
     mov rdi, 1                   # stdout
     lea rsi, [rip + message]     # message
@@ -82,6 +105,9 @@ payload:
     mov rax, [rip + entry_delta] # delta between old and new entry (need to use rip-relative addressing otherwise the code will not be position independent => segfault)
     lea r10, [rip + base]        # address of the payload (this code)
     sub r10, rax                 # address of the original entry, working with position independent code
+
+    pop r10
+    pop rax
 
     pop rdx                      # restore registers
     pop rsi
