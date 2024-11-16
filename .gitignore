@@ -14,3 +14,6 @@
 !woody.bin
 !woody.s
 !asm/
+!srcs/*.c
+!srcs/*.h
+!srcs/*.cpp

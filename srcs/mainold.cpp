@@ -6,22 +6,16 @@
 #include <string.h>
 #include <elf.h>
 #include <sys/stat.h>
-#include <errno.h>
 
 typedef struct s_elffile
 {
-	unsigned char *content;
-	size_t size;
+	void *file_content;
+	size_t file_size;
 	Elf64_Ehdr *header;
 	Elf64_Shdr *section_header_table;
 	Elf64_Phdr *program_header_table;
 	Elf64_Shdr *shstrtab_section_header;
 } t_elffile;
-
-#define ENTRY_DELTA_PAYLOAD_OFFSET 2  				// offset in the payload where the entry delta is stored
-#define ENCRYPTION_KEY_PAYLOAD_OFFSET 2+8 			// offset in the payload where the encryption key is stored
-#define TEXT_SECTION_SIZE_PAYLOAD_OFFSET 2+8+8 		// offset in the payload where the text section size is stored
-#define TEXT_SECTION_DELTA_PAYLOAD_OFFSET 2+8+8+8 	// offset in the payload where the text section delta is stored
 
 
 unsigned char payload_bin[] = {
@@ -61,60 +55,18 @@ unsigned char encryption_key = 0x42;
 // https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
 // https://github.com/zznop/drow
 
-void encrypt(void *addr, size_t size, unsigned char key)
+
+void encrypt_section(Elf64_Shdr *section, unsigned char *file_content, unsigned char key)
 {
+	uint64_t section_start = section->sh_offset;
+	uint64_t section_size = section->sh_size;
+	void *section_content = file_content + section_start;
+
 	// simple XOR encryption
-
-	for (size_t i = 0; i < size; i++)
+	for (uint64_t i = 0; i < section_size; i++)
 	{
-		((unsigned char *)addr)[i] ^= key;
+		((unsigned char *)section_content)[i] ^= key;
 	}
-}
-
-Elf64_Shdr *find_section_by_name(t_elffile *elffile, const char *section_name)
-{
-	for (unsigned int i = 0; i < elffile->header->e_shnum; i++)
-	{
-		if (strcmp((char *)(elffile->content + elffile->shstrtab_section_header->sh_offset + elffile->section_header_table[i].sh_name), section_name) == 0)
-			return &(elffile->section_header_table[i]);
-	}
-	return NULL;
-}
-
-mode_t get_file_mode(const char *filename)
-{
-	struct stat sb;
-	if (stat(filename, &sb) == -1)
-	{
-		perror("stat");
-		return 0;
-	}
-	return sb.st_mode;
-}
-
-int encrypt_section(t_elffile *elffile, const char *section_name, unsigned char key)
-{
-	Elf64_Shdr *section = find_section_by_name(elffile, section_name);
-	if (section == NULL)
-	{
-		fprintf(stderr, "Could not find section %s\n", section_name);
-		return 1;
-	}
-	encrypt(elffile->content + section->sh_offset, section->sh_size, key);
-	return 0;
-}
-
-// set some data into a payload at a specific offset
-// data_size is the size in bytes of the data to inject (eg uint64_t = 8 bytes)
-int set_payload_data(unsigned char *payload, size_t payload_size, void *data, size_t data_size, size_t offset)
-{
-	if (offset + data_size > payload_size)
-	{
-		fprintf(stderr, "Cannot set data at offset %ld, not enough space in the payload\n", offset);
-		return 1;
-	}
-	memcpy(payload + offset, data, data_size);
-	return 0;
 }
 
 
@@ -134,116 +86,6 @@ int is_elf_file(unsigned char *file_content, size_t file_size)
     return 0;
 }
 
-// Opens and parses an ELF file, returns 1 on error
-int parse_elf_file(const char *filename, t_elffile *elffile)
-{
-	memset(elffile, 0, sizeof(t_elffile));
-
-	int fd = open(filename, O_RDONLY);
-	if (fd == -1)
-	{
-		fprintf(stderr, "woodpacker: cannot open file %s: %s\n", filename, strerror(errno));
-		return 1;
-	}
-
-	elffile->size = lseek(fd, 0, SEEK_END);
-	if (elffile->size == -1)
-	{
-		perror("woodpacker: lseek END error");
-		return 1;
-	}
-	
-	// malloc instead of mmap in case we want to call woody on woody
-	elffile->content = malloc(elffile->size);
-	if (elffile->content == NULL)
-	{
-		perror("woodpacker: malloc error");
-		return 1;
-	}
-
-	if (lseek(fd, 0, SEEK_SET) == -1)
-	{
-		perror("woodpacker: lseek SET error");
-		return 1;
-	}
-
-	if (read(fd, elffile->content, elffile->size) == -1)
-	{
-		fprintf(stderr, "woodpacker: cannot read file %s: %s\n", filename, strerror(errno));
-		return 1;
-	}
-
-	if (close(fd == -1))
-	{
-		perror("woodpacker: close error");
-		return 1;
-	}
-
-	if (elffile->size < EI_NIDENT) // If we cannot get identification infos (magic number, architecture etc.)
-	{
-		fprintf(stderr, "woodpacker: file %s is too small to be an ELF file\n", filename);
-		return 1;
-	}
-
-	if (!is_elf_file(elffile->content, elffile->size))
-	{
-		fprintf(stderr, "woodpacker: file %s is not an ELF file\n", filename);
-		return 1;
-	}
-
-	if (elffile->content[EI_VERSION] != EV_CURRENT)
-	{
-		fprintf(stderr, "woodpacker: file %s has invalid ELF version\n", filename);
-		return 1;
-	}
-
-	if (elffile->content[EI_CLASS] != ELFCLASS64)
-	{
-		fprintf(stderr, "woodpacker: file %s is not a 64-bit ELF file\n", filename);
-		return 1;
-	}
-
-	if (elffile->size < sizeof(Elf64_Ehdr))
-	{
-		fprintf(stderr, "woodpacker: file %s is truncated\n", filename);
-		return 1;
-	}
-
-	elffile->header = (Elf64_Ehdr *)elffile->content;
-
-	// check if section header table is within the file (header section start + header section size * header section entries count)
-	if (elffile->content + elffile->header->e_shoff + (elffile->header->e_shentsize * elffile->header->e_shnum) > elffile->content + elffile->size)
-	{
-		fprintf(stderr, "woodpacker: invalid section header table\n");
-		return 1;
-	}
-
-	// if shstrtab section index is invalid
-	if (elffile->header->e_shstrndx >= elffile->header->e_shnum)
-	{
-		fprintf(stderr, "woodpacker: invalid shstrtab section index\n");
-		return 1;
-	}
-
-	elffile->section_header_table = (Elf64_Shdr *)(elffile->content + elffile->header->e_shoff);
-	elffile->shstrtab_section_header = elffile->section_header_table + elffile->header->e_shstrndx;
-	elffile->program_header_table = (Elf64_Phdr *)(elffile->content + elffile->header->e_phoff);
-
-	if (elffile->shstrtab_section_header->sh_type != SHT_STRTAB)
-	{
-		fprintf(stderr, "woodpacker: invalid shstrtab section type\n");
-		return 1;
-	}
-
-	if (elffile->shstrtab_section_header->sh_offset + elffile->shstrtab_section_header->sh_size > elffile->size)
-	{
-		fprintf(stderr, "woodpacker: invalid shstrtab section size\n");
-		return 1;
-	}
-
-	return 0;
-}
-
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -252,47 +94,175 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	t_elffile elffile = {0};
-
-	if (parse_elf_file(argv[1], &elffile) != 0)
+	// open the target ELF file
+	int fd = open(argv[1], O_RDONLY);
+	if (fd == -1)
 	{
-		free(elffile.content);
+		perror("Cannot open file");
 		return EXIT_FAILURE;
 	}
 
-	unsigned char* payload_content = payload_bin;
-
-	if (encrypt_section(&elffile, ".text", encryption_key) != 0)
+	size_t file_size = lseek(fd, 0, SEEK_END);
+	if (file_size == -1)
 	{
-		free(elffile.content);
+		perror("Cannot lseek file");
 		return EXIT_FAILURE;
 	}
 
-	// inject decryption key into payload
-	if (set_payload_data(payload_bin, payload_size, &encryption_key, sizeof(encryption_key), ENCRYPTION_KEY_PAYLOAD_OFFSET) != 0)
+
+	unsigned char *file_content = malloc(file_size);
+	if (file_content == NULL)
 	{
-		free(elffile.content);
+		perror("Malloc failed");
 		return EXIT_FAILURE;
 	}
 
-	Elf64_Shdr *text_section = find_section_by_name(&elffile, ".text");
+	if (lseek(fd, 0, SEEK_SET) == -1)
+	{
+		perror("Cannot lseek file");
+		return EXIT_FAILURE;
+	}
+
+	if (read(fd, file_content, file_size) == -1)
+	{
+		perror("Cannot read file");
+		return EXIT_FAILURE;
+	}
+
+	if (close(fd) == -1)
+	{
+		perror("Cannot close file");
+		return EXIT_FAILURE;
+	}
+
+	if (file_size < EI_NIDENT) // If we cannot get identification infos (magic number, architecture etc.)
+	{
+		fprintf(stderr, "File is too small to be an ELF file\n");
+		free(file_content);
+		return 1;
+	}
+
+    if (!is_elf_file(file_content, file_size))
+    {
+		fprintf(stderr, "File is not an ELF file\n");
+		free(file_content);
+        return EXIT_FAILURE;
+    }
+
+	if (file_content[EI_VERSION] != EV_CURRENT)
+	{
+		fprintf(stderr, "File has invalid ELF version\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	if (file_content[EI_CLASS] != ELFCLASS64)
+	{
+		fprintf(stderr, "Only 64-bit ELF files are supported\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	if (file_size < sizeof(Elf64_Ehdr))
+	{
+		fprintf(stderr, "File is too small to contain an ELF header\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	Elf64_Ehdr *header = (Elf64_Ehdr *)file_content;
+
+	void *header_section_start = file_content + header->e_shoff;
+	size_t header_section_size = header->e_shentsize;
+	size_t header_section_entries_count = header->e_shnum;
+	size_t shstrtab_section_index = header->e_shstrndx;
+
+	if ((unsigned char *)header_section_start + header_section_size * header_section_entries_count > file_content + file_size)
+	{
+		fprintf(stderr, "Invalid section header table\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	if (shstrtab_section_index >= header_section_entries_count)
+	{
+		fprintf(stderr, "Invalid shstrtab section index\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	Elf64_Shdr *section_header_table = (Elf64_Shdr *)header_section_start;
+	Elf64_Shdr *shstrtab_section_header = section_header_table + shstrtab_section_index;
+
+	if (shstrtab_section_header->sh_type != SHT_STRTAB)
+	{
+		fprintf(stderr, "Invalid shstrtab section type\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	if (shstrtab_section_header->sh_offset + shstrtab_section_header->sh_size > file_size)
+	{
+		fprintf(stderr, "Invalid shstrtab section size\n");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+
+	unsigned char *payload_content = malloc(payload_size);
+	if (payload_content == NULL)
+	{
+		perror("malloc");
+		free(file_content);
+		return EXIT_FAILURE;
+	}
+
+	memcpy(payload_content, payload_bin, payload_size);
+
+	Elf64_Phdr *program_header_table = (Elf64_Phdr *)(file_content + header->e_phoff);
+
+
+		// encrypt the payload
+	
+	// find .text section
+	Elf64_Shdr *text_section = NULL;
+	for (unsigned int i = 0; i < header->e_shnum; i++)
+	{
+		if (strcmp((char *)(file_content + shstrtab_section_header->sh_offset + section_header_table[i].sh_name), ".text") == 0)
+		{
+			printf("Found section %s\n", (char *)(file_content + shstrtab_section_header->sh_offset + section_header_table[i].sh_name));
+			text_section = &(section_header_table[i]);
+			break;
+		}
+	}
+
 	if (text_section == NULL)
 	{
 		fprintf(stderr, "Could not find .text section\n");
-		free(elffile.content);
+		free(file_content);
 		return EXIT_FAILURE;
+	}
+	
+	printf("First 8 bytes of text section before encryption: ");
+	for (int i = 0; i < 8; i++)
+	{
+		printf("%02x ", ((unsigned char *)file_content)[text_section->sh_offset + i]);
+	}
+	encrypt_section(text_section, file_content, encryption_key);
+	printf("\nFirst 8 bytes of text section after encryption: ");
+	for (int i = 0; i < 8; i++)
+	{
+		printf("%02x ", ((unsigned char *)file_content)[text_section->sh_offset + i]);
 	}
 
-	// inject text decrypt section size into payload
-	if (set_payload_data(payload_bin, payload_size, &(text_section->sh_size), sizeof(text_section->sh_size), TEXT_SECTION_SIZE_PAYLOAD_OFFSET) != 0)
-	{
-		free(elffile.content);
-		return EXIT_FAILURE;
-	}
+	// inject decryption values into the payload
+	*(uint64_t *)(payload_content + 2+8) = (uint64_t)encryption_key;
+	*(uint64_t *)(payload_content + 2+8+8) = text_section->sh_size;
+	printf("Text section size: %ld\n", text_section->sh_size);
 
 	// find segment where .text section is located
 	Elf64_Phdr *text_segment = NULL;
-	for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
+	for (unsigned int i = 0; i < header->e_phnum; i++)
 	{
 		if (program_header_table[i].p_offset <= text_section->sh_offset && program_header_table[i].p_offset + program_header_table[i].p_filesz >= text_section->sh_offset + text_section->sh_size)
 		{
@@ -304,16 +274,16 @@ int main(int argc, char **argv)
 	if (text_segment == NULL)
 	{
 		fprintf(stderr, "Could not find segment for .text section\n");
-		free(elffile.content);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
 	// printf("Encrypted .text section\n");
 	
 	int found_cave = 0;
-	// Elf64_Shdr *section_header_table = (Elf64_Shdr *)(elffile.content + header->e_shoff);
+	// Elf64_Shdr *section_header_table = (Elf64_Shdr *)(file_content + header->e_shoff);
 	// We find an executable segment, find the last section in this segment, then try to expand it using the free padding space, try this for every executable segment
-	for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
+	for (unsigned int i = 0; i < header->e_phnum; i++)
 	{
 		if (found_cave)
 			break;
@@ -327,13 +297,13 @@ int main(int argc, char **argv)
 			uint64_t segment_end = program_header_table[i].p_offset + program_header_table[i].p_memsz;
 
 
-			for (unsigned int j = 0; j < elffile.header->e_shnum; j++)
+			for (unsigned int j = 0; j < header->e_shnum; j++)
 			{
 				uint64_t section_start = section_header_table[j].sh_offset;
 				uint64_t section_end = section_header_table[j].sh_offset + section_header_table[j].sh_size;
 
 				if (section_end == segment_end) {
-					printf("Section %s at 0x%08lx (size: %ld bytes)\n", (char *)(elffile.content + shstrtab_section_header->sh_offset + section_header_table[j].sh_name), section_start, section_header_table[j].sh_size);
+					printf("Section %s at 0x%08lx (size: %ld bytes)\n", (char *)(file_content + shstrtab_section_header->sh_offset + section_header_table[j].sh_name), section_start, section_header_table[j].sh_size);
 					
 					// find next section start
 					// TODO check if its last section of the file
@@ -353,7 +323,7 @@ int main(int argc, char **argv)
 						continue;
 					}
 
-					void *payload_start = elffile.content + section_start + section_header_table[j].sh_size;
+					void *payload_start = file_content + section_start + section_header_table[j].sh_size;
 					uint64_t new_entry_point = section_start + section_header_table[j].sh_size;
 
 					// now we expand the section and segment to fit the payload
@@ -365,8 +335,8 @@ int main(int argc, char **argv)
 					section->sh_size += payload_size;
 
 					// now modify entry point to point to the payload
-					printf("Current entry point: 0x%08lx\n", elffile.header->e_entry);
-					uint64_t old_entry_point = elffile.header->e_entry;
+					printf("Current entry point: 0x%08lx\n", header->e_entry);
+					uint64_t old_entry_point = header->e_entry;
 					header->e_entry = new_entry_point;
 					printf("New entry point: 0x%08lx\n", new_entry_point);
 
@@ -409,7 +379,7 @@ int main(int argc, char **argv)
 
 				// first check if its the highest virtual address PT_LOAD segment
 				Elf64_Phdr *highest_vaddr_segment = NULL;
-				for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
+				for (unsigned int i = 0; i < header->e_phnum; i++)
 				{
 					if (program_header_table[i].p_type == PT_LOAD)
 					{
@@ -430,7 +400,7 @@ int main(int argc, char **argv)
 					int overlaps = 0;
 					// we use filesz and not memsz because we just want to see if we can expand in file. There might be overlap when loaded in memory but we don't care (since our code is executed first)
 					// for instance with .bss section, which is probably loaded in same memory space as the segment but we don't care
-					for (unsigned int j = 0; j < elffile.header->e_phnum; j++)
+					for (unsigned int j = 0; j < header->e_phnum; j++)
 					{
 						if (program_header_table[j].p_offset < new_segment_end_offset && program_header_table[j].p_offset + program_header_table[j].p_filesz > segment_end_offset)
 						{
@@ -449,7 +419,7 @@ int main(int argc, char **argv)
 					
 					
 					// simply expand the segment
-					uint64_t old_entry_point = elffile.header->e_entry;
+					uint64_t old_entry_point = header->e_entry;
 					uint64_t new_entry_point = segment->p_vaddr + segment->p_memsz;
 					header->e_entry = new_entry_point;
 
@@ -464,10 +434,10 @@ int main(int argc, char **argv)
 					// inject the delta into the payload starting at the 3rd byte
 					*(int64_t *)(payload_content + 2) = entry_delta;
 
-					elffile.content = realloc(elffile.content, elffile.size + payload_size); // expand the file to fit the payload
-					memcpy(elffile.content + elffile.size, payload_content, payload_size);
+					file_content = realloc(file_content, file_size + payload_size); // expand the file to fit the payload
+					memcpy(file_content + file_size, payload_content, payload_size);
 
-					elffile.size += payload_size;
+					file_size += payload_size;
 					printf("Successfully injected payload\n");
 					printf("NEW New entry point: 0x%08lx\n", new_entry_point);
 					found_cave = 1;
@@ -485,7 +455,7 @@ int main(int argc, char **argv)
 
 		// find the highest virtual address in use
 		uint64_t highest_vaddr = 0;
-		for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
+		for (unsigned int i = 0; i < header->e_phnum; i++)
 		{
 			if (program_header_table[i].p_vaddr + program_header_table[i].p_memsz > highest_vaddr)
 			{
@@ -498,7 +468,7 @@ int main(int argc, char **argv)
 		printf("Highest virtual address: 0x%08lx\n", highest_vaddr_aligned);
 	
 		// find the PT_NOTE segment
-		for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
+		for (unsigned int i = 0; i < header->e_phnum; i++)
 		{
 			if (program_header_table[i].p_type == PT_NOTE)
 			{
@@ -508,13 +478,13 @@ int main(int argc, char **argv)
 				segment->p_type = PT_LOAD;
 				segment->p_flags = PF_R | PF_X;
 				// set high address to avoid collision
-				segment->p_vaddr = highest_vaddr_aligned + elffile.size; // why is this + elffile.size mandatory ?? prob for alignment but why ?? (otherwise segfault)
+				segment->p_vaddr = highest_vaddr_aligned + file_size; // why is this + file_size mandatory ?? prob for alignment but why ?? (otherwise segfault)
 				
 				// remove all previous content (don't do += payload_size) otherwise if we later try to expand this segment it will segfault (why tho ?)
 				segment->p_filesz = payload_size;
 				segment->p_memsz = payload_size;
 
-				segment->p_offset = elffile.size; // append the payload to the end of the file
+				segment->p_offset = file_size; // append the payload to the end of the file
 
 				uint64_t old_entry_point = header->e_entry;
 				uint64_t new_entry_point = segment->p_vaddr;
@@ -527,10 +497,10 @@ int main(int argc, char **argv)
 				*(uint64_t *)(payload_content + 2) = entry_delta;
 
 
-				elffile.content = realloc(elffile.content, elffile.size + payload_size); // expand the file to fit the payload
-				memcpy(elffile.content + elffile.size, payload_content, payload_size);
+				file_content = realloc(file_content, file_size + payload_size); // expand the file to fit the payload
+				memcpy(file_content + file_size, payload_content, payload_size);
 
-				elffile.size += payload_size;
+				file_size += payload_size;
 				printf("Successfully injected payload\n");
 				printf("New entry point: 0x%08lx\n", new_entry_point);
 
@@ -543,7 +513,7 @@ int main(int argc, char **argv)
 	if (!found_cave)
 	{
 		fprintf(stderr, "Could not find a suitable cave\n");
-		free(elffile.content);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
@@ -554,22 +524,22 @@ int main(int argc, char **argv)
 	if (new_file == NULL)
 	{
 		perror("error on fopen");
-		free(elffile.content);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 
 
-	mode_t original_mode = get_file_mode(argv[1]);
-	chmod("woody", original_mode);
 
-	if (fwrite(elffile.content, 1, elffile.size, new_file) != elffile.size)
+	chmod("woody", 0777);
+
+	if (fwrite(file_content, 1, file_size, new_file) != file_size)
 	{
 		perror("error on fwrite");
 		fclose(new_file);
-		free(elffile.content);
+		free(file_content);
 		return EXIT_FAILURE;
 	}
 	
 
-	free(elffile.content);
+	free(file_content);
 }
