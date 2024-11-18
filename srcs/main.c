@@ -522,7 +522,7 @@ int main(int argc, char **argv)
 
 			// We can now expand the segment
 			printf("INFO: expanding segment at %08lx by %ld bytes, new entry: 0x%08lx\n", current_segment->p_offset, payload_size, current_segment->p_vaddr + current_segment->p_memsz);
-			patch_payload_entry(payload_bin, payload_size, &elffile, current_segment->p_offset + current_segment->p_memsz); // new entry point is end of the segment before expansion
+			patch_payload_entry(payload_bin, payload_size, &elffile, current_segment->p_vaddr + current_segment->p_memsz); // new entry point is end of the segment before expansion
 			patch_payload_decrypt_offset(payload_bin, payload_size, &elffile, current_segment->p_vaddr + current_segment->p_memsz); // update text section decrypt offset
 			expand_segment_section(&elffile, current_segment, NULL, payload_size); // we don't care about the section, we just want to expand the segment
 			expand_file(&elffile, payload_size);
