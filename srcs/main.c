@@ -572,6 +572,7 @@ int main(int argc, char **argv)
 			// we don't care about previous content of segment, we just overwrite it
 			segment->p_filesz = payload_size;
 			segment->p_memsz = payload_size;
+			segment->p_align = 0x1000;
 
 			segment->p_vaddr = highest_vaddr; // + elffile.size; // why is this + elffile.size mandatory ?? prob for alignment but why ?? (otherwise segfault)
 			uint64_t aligned_offset = (elffile.size + 0xfff) & ~0xfff;
