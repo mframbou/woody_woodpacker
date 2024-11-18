@@ -74,7 +74,7 @@ void encrypt(void *addr, size_t size, unsigned char key)
 
 Elf64_Shdr *find_section_by_name(t_elffile *elffile, const char *section_name)
 {
-	for (unsigned int i = 0; i < elffile->header->e_shnum; i++)
+	for (size_t i = 0; i < elffile->header->e_shnum; i++)
 	{
 		if (strcmp((char *)(elffile->content + elffile->shstrtab_section_header->sh_offset + elffile->section_header_table[i].sh_name), section_name) == 0)
 			return &(elffile->section_header_table[i]);
@@ -84,7 +84,7 @@ Elf64_Shdr *find_section_by_name(t_elffile *elffile, const char *section_name)
 
 Elf64_Phdr *find_segment_of_section(t_elffile *elffile, Elf64_Shdr *section)
 {
-	for (unsigned int i = 0; i < elffile->header->e_phnum; i++)
+	for (size_t i = 0; i < elffile->header->e_phnum; i++)
 	{
 		if (elffile->program_header_table[i].p_offset <= section->sh_offset && elffile->program_header_table[i].p_offset + elffile->program_header_table[i].p_filesz >= section->sh_offset + section->sh_size)
 			return &(elffile->program_header_table[i]);
@@ -187,7 +187,7 @@ void patch_payload_decrypt_offset(unsigned char *payload, size_t payload_size, t
 
 int inject_payload(t_elffile *elffile, unsigned char *payload, size_t payload_size, void *payload_start)
 {
-	if (payload_start < elffile->content || payload_start > elffile->content + elffile->size)
+	if (payload_start < (void *)elffile->content || payload_start > ((void *)elffile->content + elffile->size))
 	{
 		fprintf(stderr, "woodpacker: invalid payload start address\n");
 		return 1;
@@ -202,7 +202,15 @@ void expand_file(t_elffile *elffile, size_t expand_by)
 	if (elffile->size + expand_by > elffile->_malloc_size)
 	{
 		// realloc and update pointers
-		elffile->content = realloc(elffile->content, elffile->size + expand_by);
+		printf("INFO: expanding file (realloc) by %ld bytes\n", expand_by);
+		void *new_content = realloc(elffile->content, elffile->size + expand_by);
+		if (new_content == NULL)
+		{
+			perror("woodpacker: realloc error");
+			exit(EXIT_FAILURE);
+		}
+		free(elffile->content);
+		elffile->content = new_content;
 		elffile->_malloc_size = elffile->size + expand_by;
 
 		elffile->header = (Elf64_Ehdr *)elffile->content;
@@ -214,6 +222,7 @@ void expand_file(t_elffile *elffile, size_t expand_by)
 	else
 	{
 		// we have enough space, just update size
+		printf("INFO: expanding file by %ld bytes\n", expand_by);
 		elffile->size += expand_by;
 	}
 }
@@ -361,8 +370,6 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	// unsigned char* payload_content = payload_bin;
-
 	if (encrypt_section(&elffile, ".text", encryption_key) != 0)
 	{
 		free(elffile.content);
@@ -417,7 +424,7 @@ int main(int argc, char **argv)
 			continue;
 
 		
-		printf("Exec segment from 0x%08lx to 0x%08lx (size: %ld bytes)\n", current_segment->p_offset, (current_segment->p_offset + current_segment->p_memsz), current_segment->p_memsz);
+		printf("INFO: exec segment from 0x%08lx to 0x%08lx (size: %ld bytes)\n", current_segment->p_offset, (current_segment->p_offset + current_segment->p_memsz), current_segment->p_memsz);
 		uint64_t segment_start = current_segment->p_offset;
 		uint64_t segment_end = current_segment->p_offset + current_segment->p_memsz; // memsz instead of filesz for .bss section for instance
 
@@ -441,11 +448,11 @@ int main(int argc, char **argv)
 				uint64_t available_space = next_section_start - section_end;
 				if (available_space < payload_size)
 				{
-					printf("woodpacker: not enough space for the payload, trying next section\n");
+					printf("INFO: not enough space for the payload, trying next section\n");
 					continue;
 				}
 
-				printf("woodpacker: found %ld bytes of free space at address 0x%08lx (payload size: %ld)\n", available_space, section_end, payload_size);
+				printf("INFO: found %ld bytes of free space at address 0x%08lx (payload size: %ld)\n", available_space, section_end, payload_size);
 
 				void *payload_start = elffile.content + section_end;
 				uint64_t new_entry_point = section_end;
@@ -453,8 +460,8 @@ int main(int argc, char **argv)
 				// now we expand the section and segment to fit the payload
 				uint64_t payload_vaddr = current_segment->p_vaddr + current_segment->p_memsz; // vaddr where the payload will be loaded
 				expand_segment_section(&elffile, current_segment, current_section, payload_size);
-				printf("woodpacker: old entry point: 0x%08lx\n", elffile.header->e_entry);
-				printf("woodpacker: new entry point: 0x%08lx\n", new_entry_point);
+				printf("INFO: old entry point: 0x%08lx\n", elffile.header->e_entry);
+				printf("INFO: new entry point: 0x%08lx\n", new_entry_point);
 				patch_payload_entry(payload_bin, payload_size, &elffile, new_entry_point);
 				patch_payload_decrypt_offset(payload_bin, payload_size, &elffile, payload_vaddr);
 
@@ -471,7 +478,7 @@ int main(int argc, char **argv)
 
 		if (!injected_payload)
 		{
-			printf("woodpacker: couldn't find code cave in current segment, try to expand the segment\n");
+			printf("INFO: couldn't find code cave in current segment, try to expand the segment\n");
 			
 			// We check if the segment has the highest virtual address (last segment in memory) meaning we can expand it without overlapping other segments
 			// Also check if we can expand the segment in file without overlapping other sections (eg if code is injected at the end of the file it's good)
@@ -487,7 +494,7 @@ int main(int argc, char **argv)
 
 			if (current_segment != highest_vaddr_segment)
 			{
-				printf("woodpacker: segment is not the highest virtual address PT_LOAD segment, continue searching for cave\n");
+				printf("INFO: segment is not the highest virtual address PT_LOAD segment, continue searching for cave\n");
 				continue;
 			}
 
@@ -509,15 +516,79 @@ int main(int argc, char **argv)
 
 			if (overlaps)
 			{
-				printf("woodpacker: segment overlaps other segment in file, cannot expand\n");
+				printf("INFO: segment overlaps other segment in file, cannot expand\n");
 				continue;
 			}
 
 			// We can now expand the segment
+			printf("INFO: expanding segment at %08lx by %ld bytes, new entry: 0x%08lx\n", current_segment->p_offset, payload_size, current_segment->p_vaddr + current_segment->p_memsz);
 			patch_payload_entry(payload_bin, payload_size, &elffile, current_segment->p_offset + current_segment->p_memsz); // new entry point is end of the segment before expansion
+			patch_payload_decrypt_offset(payload_bin, payload_size, &elffile, current_segment->p_vaddr + current_segment->p_memsz); // update text section decrypt offset
 			expand_segment_section(&elffile, current_segment, NULL, payload_size); // we don't care about the section, we just want to expand the segment
 			expand_file(&elffile, payload_size);
 			if (inject_payload(&elffile, payload_bin, payload_size, elffile.content + elffile.size - payload_size) != 0)
+			{
+				free(elffile.content);
+				return EXIT_FAILURE;
+			}
+
+			printf("INFO: successfully expanded segment by %ld bytes\n", payload_size);
+			injected_payload = 1;
+			break;
+		}
+	}
+
+	if (!injected_payload)
+	{
+		printf("INFO: couldn't find nor expand code cave in any segment, trying PT_NOTE injection\n");
+
+		// find the highest virtual address in use
+		uint64_t highest_vaddr = 0;
+		for (size_t i = 0; i < elffile.header->e_phnum; i++)
+		{
+			if (elffile.program_header_table[i].p_vaddr + elffile.program_header_table[i].p_memsz > highest_vaddr)
+				highest_vaddr = elffile.program_header_table[i].p_vaddr + elffile.program_header_table[i].p_memsz;
+		}
+
+		highest_vaddr = (highest_vaddr + 0xfff) & ~0xfff; // align to page size
+		printf("INFO: highest virtual address: 0x%08lx\n", highest_vaddr);
+
+		for (size_t i = 0; i < elffile.header->e_phnum; i++)
+		{
+			Elf64_Phdr *segment = &(elffile.program_header_table[i]);
+
+			if (segment->p_type != PT_NOTE)
+				continue;
+
+			printf("INFO: found PT_NOTE segment\n");
+
+			// we now modify the PT_NOTE segment to be a PT_LOAD segment, setting right permissions, virtual address and size
+			// we then inject the payload at the end of the file and set the entry point to the new virtual address
+
+			segment->p_type = PT_LOAD;
+			segment->p_flags = PF_R | PF_X;
+			// segment->p_align = 0x1000;
+
+			// we don't care about previous content of segment, we just overwrite it
+			segment->p_filesz = payload_size;
+			segment->p_memsz = payload_size;
+
+			segment->p_vaddr = highest_vaddr; // + elffile.size; // why is this + elffile.size mandatory ?? prob for alignment but why ?? (otherwise segfault)
+			uint64_t aligned_offset = (elffile.size + 0xfff) & ~0xfff;
+			segment->p_offset = aligned_offset;
+			// segment->p_offset = elffile.size; // append the payload to the end of the file
+
+			uint64_t new_entry_point = segment->p_vaddr;
+			patch_payload_entry(payload_bin, payload_size, &elffile, new_entry_point);
+			patch_payload_decrypt_offset(payload_bin, payload_size, &elffile, segment->p_vaddr);
+
+			uint64_t new_file_size = aligned_offset + payload_size;
+			elffile.content = realloc(elffile.content, new_file_size);
+			elffile.size = new_file_size;
+			elffile._malloc_size = new_file_size;
+			// expand_file(&elffile, payload_size);
+			printf("test: %08lx %08lx %08lx\n", elffile.size, aligned_offset, payload_size);
+			if (inject_payload(&elffile, payload_bin, payload_size, elffile.content + segment->p_offset) != 0)
 			{
 				free(elffile.content);
 				return EXIT_FAILURE;
@@ -528,87 +599,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-
-
-	// TODO im here refactor
-
-	if (!found_cave)
+	if (!injected_payload)
 	{
-		// couldnt find already existing cave, so create one using PT_NOTE segment
-
-		printf("didnt find a cave, try PT_NOTE inject\n");
-
-		// find the highest virtual address in use
-		uint64_t highest_vaddr = 0;
-		for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
-		{
-			if (program_header_table[i].p_vaddr + program_header_table[i].p_memsz > highest_vaddr)
-			{
-				highest_vaddr = program_header_table[i].p_vaddr + program_header_table[i].p_memsz;
-			}
-		}
-
-		// now align it to page size
-		uint64_t highest_vaddr_aligned = (highest_vaddr + 0xfff) & ~0xfff;
-		printf("Highest virtual address: 0x%08lx\n", highest_vaddr_aligned);
-	
-		// find the PT_NOTE segment
-		for (unsigned int i = 0; i < elffile.header->e_phnum; i++)
-		{
-			if (program_header_table[i].p_type == PT_NOTE)
-			{
-				printf("Found PT_NOTE segment\n");
-				
-				Elf64_Phdr *segment = &(program_header_table[i]);
-				segment->p_type = PT_LOAD;
-				segment->p_flags = PF_R | PF_X;
-				// set high address to avoid collision
-				segment->p_vaddr = highest_vaddr_aligned + elffile.size; // why is this + elffile.size mandatory ?? prob for alignment but why ?? (otherwise segfault)
-				
-				// remove all previous content (don't do += payload_size) otherwise if we later try to expand this segment it will segfault (why tho ?)
-				segment->p_filesz = payload_size;
-				segment->p_memsz = payload_size;
-
-				segment->p_offset = elffile.size; // append the payload to the end of the file
-
-				uint64_t old_entry_point = header->e_entry;
-				uint64_t new_entry_point = segment->p_vaddr;
-				header->e_entry = new_entry_point;
-
-				uint64_t entry_delta = new_entry_point - old_entry_point;
-				printf("Entry point delta: 0x%lx\n", entry_delta);
-
-				// inject the delta into the payload starting at the 3rd byte
-				*(uint64_t *)(payload_content + 2) = entry_delta;
-
-
-				elffile.content = realloc(elffile.content, elffile.size + payload_size); // expand the file to fit the payload
-				memcpy(elffile.content + elffile.size, payload_content, payload_size);
-
-				elffile.size += payload_size;
-				printf("Successfully injected payload\n");
-				printf("New entry point: 0x%08lx\n", new_entry_point);
-
-				found_cave = 1;
-				break;
-			}
-		}
-	}
-
-	if (!found_cave)
-	{
-		fprintf(stderr, "Could not find a suitable cave\n");
+		fprintf(stderr, "woodpacker: couldn't find a way to inject payload\n");
 		free(elffile.content);
 		return EXIT_FAILURE;
 	}
 
-
-
-	// write the result to a new file
-	FILE *new_file = fopen("woody", "w");
-	if (new_file == NULL)
+	FILE *out_file = fopen("woody", "w");
+	if (out_file == NULL)
 	{
-		perror("error on fopen");
+		perror("woodpacker: error on fopen output file");
 		free(elffile.content);
 		return EXIT_FAILURE;
 	}
@@ -617,14 +618,17 @@ int main(int argc, char **argv)
 	mode_t original_mode = get_file_mode(argv[1]);
 	chmod("woody", original_mode);
 
-	if (fwrite(elffile.content, 1, elffile.size, new_file) != elffile.size)
+	if (fwrite(elffile.content, 1, elffile.size, out_file) != elffile.size)
 	{
-		perror("error on fwrite");
-		fclose(new_file);
+		perror("woodpacker: error on fwrite output file");
+		fclose(out_file);
 		free(elffile.content);
 		return EXIT_FAILURE;
 	}
 	
-
+	fclose(out_file);
 	free(elffile.content);
+	printf("INFO: successfully injected payload\n");
+
+	return EXIT_SUCCESS;
 }
