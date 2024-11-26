@@ -36,3 +36,7 @@ https://github.com/zznop/drow
 
 https://en.wikipedia.org/wiki/Tiny_Encryption_Algorithm
 https://www.nayuki.io/page/tiny-encryption-algorithm-in-x86-assembly
+
+it seems that bike executables (eg. /bin/ls) are split into multiple memory segments by the loader
+so when using readelf it shows only 1 RX segment, but in GDB there is another one appearing, so we might
+need to mprotect the other segment too, need to find out how since on WSL it works fine

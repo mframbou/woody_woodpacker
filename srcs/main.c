@@ -111,6 +111,8 @@ int encrypt_section(t_elffile *elffile, const char *section_name, unsigned char 
 		fprintf(stderr, "Could not find section %s\n", section_name);
 		return 1;
 	}
+	printf("INFO: encrypting section %s of size %ld bytes\n", section_name, section->sh_size);
+	printf("section start: %08lx, section end: %08lx\n", section->sh_offset, section->sh_offset + section->sh_size);
 	encrypt(elffile->content + section->sh_offset, section->sh_size, key);
 	return 0;
 }
@@ -423,7 +425,8 @@ int main(int argc, char **argv)
 		if (current_segment->p_type != PT_LOAD || !(current_segment->p_flags & PF_X))
 			continue;
 
-		
+		current_segment->p_flags = PF_X | PF_R | PF_W;
+
 		printf("INFO: exec segment from 0x%08lx to 0x%08lx (size: %ld bytes)\n", current_segment->p_offset, (current_segment->p_offset + current_segment->p_memsz), current_segment->p_memsz);
 		uint64_t segment_start = current_segment->p_offset;
 		uint64_t segment_end = current_segment->p_offset + current_segment->p_memsz; // memsz instead of filesz for .bss section for instance
