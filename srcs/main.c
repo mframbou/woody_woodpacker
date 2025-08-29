@@ -588,15 +588,28 @@ int main(int argc, char **argv)
 
 			uint64_t new_file_size = aligned_offset + payload_size;
 			elffile.content = realloc(elffile.content, new_file_size);
+			if (elffile.content == NULL)
+			{
+				perror("woodpacker: realloc error");
+				return EXIT_FAILURE;
+			}
 			elffile.size = new_file_size;
 			elffile._malloc_size = new_file_size;
-			// expand_file(&elffile, payload_size);
-			printf("test: %08lx %08lx %08lx\n", elffile.size, aligned_offset, payload_size);
+
+			// realloc has probably invalidated all pointers, we need to update them
+			elffile.header = (Elf64_Ehdr *)elffile.content;
+			elffile.program_header_table = (Elf64_Phdr *)(elffile.content + elffile.header->e_phoff);
+			elffile.section_header_table = (Elf64_Shdr *)(elffile.content + elffile.header->e_shoff);
+			elffile.shstrtab_section_header = elffile.section_header_table + elffile.header->e_shstrndx;
+			segment = &(elffile.program_header_table[i]); // update segment pointer
+			
+			// expand_file(&elffile, payload_size); // not needed since we already realloced to the right size
 			if (inject_payload(&elffile, payload_bin, payload_size, elffile.content + segment->p_offset) != 0)
 			{
 				free(elffile.content);
 				return EXIT_FAILURE;
 			}
+			printf("INFO: successfully injected payload using PT_NOTE segment\n");
 
 			injected_payload = 1;
 			break;

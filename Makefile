@@ -9,7 +9,7 @@ NAME = woody_woodpacker
 
 CC = gcc
 
-CFLAGS =  # -Wall -Wextra -Werror
+CFLAGS = -fsanitize=address -g3 # -Wall -Wextra -Werror
 
 SHELL = zsh
 
